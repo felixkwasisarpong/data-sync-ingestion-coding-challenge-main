@@ -1,0 +1,20 @@
+{
+  "name": "data-sync-ingestion-coding-challenge-main",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -ws build",
+    "start": "npm run -w @datasync/ingestion start",
+    "test": "npm run -ws test",
+    "migrate": "npm run -w @datasync/ingestion migrate",
+    "ingest": "npm run -w @datasync/ingestion ingest",
+    "submit:prepare": "npm run -w @datasync/ingestion submit:prepare",
+    "submit:send": "npm run -w @datasync/ingestion submit:send"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
