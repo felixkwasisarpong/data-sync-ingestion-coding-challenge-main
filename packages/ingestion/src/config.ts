@@ -15,17 +15,24 @@ function readInt(name: string, fallback: number): number {
   return parsed;
 }
 
+function readApiPageLimit(apiMode: "mock" | "live"): number {
+  const fallback = apiMode === "live" ? 5000 : 1000;
+  return readInt("API_PAGE_LIMIT", fallback);
+}
+
 export function loadConfig(): IngestionConfig {
+  const apiMode = process.env.API_MODE === "live" ? "live" : "mock";
+
   return {
     databaseUrl:
       process.env.DATABASE_URL ??
       "postgresql://postgres:postgres@localhost:5434/ingestion",
-    apiMode: process.env.API_MODE === "live" ? "live" : "mock",
+    apiMode,
     apiBaseUrl:
       process.env.API_BASE_URL ??
       "http://mock-api:3100/api/v1",
     apiKey: process.env.DATASYNC_API_KEY ?? "mock-api-key",
-    apiPageLimit: readInt("API_PAGE_LIMIT", 1000),
+    apiPageLimit: readApiPageLimit(apiMode),
     apiTimeoutMs: readInt("API_TIMEOUT_MS", 10000),
     apiMaxRetries: readInt("API_MAX_RETRIES", 5),
     apiRetryBaseMs: readInt("API_RETRY_BASE_MS", 200),
