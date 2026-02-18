@@ -22,6 +22,7 @@ export interface BulkWriter {
     events: DataSyncEvent[],
     cursor: string | null
   ) => Promise<BulkWriteResult>;
+  close?: () => Promise<void>;
 }
 
 function normalizeOccurredAt(raw: string | null | undefined): string | null {
@@ -105,18 +106,53 @@ export async function writeBatchWithClient(
 }
 
 export function createBulkWriter(pool: Pool): BulkWriter {
+  let cachedClient: PoolClient | null = null;
+  let connectPromise: Promise<PoolClient> | null = null;
+
+  const getClient = async (): Promise<PoolClient> => {
+    if (cachedClient) {
+      return cachedClient;
+    }
+
+    if (!connectPromise) {
+      connectPromise = pool.connect().then((client) => {
+        cachedClient = client;
+        return client;
+      });
+    }
+
+    try {
+      return await connectPromise;
+    } finally {
+      connectPromise = null;
+    }
+  };
+
+  const releaseCachedClient = (): void => {
+    if (!cachedClient) {
+      return;
+    }
+
+    cachedClient.release();
+    cachedClient = null;
+  };
+
   return {
     async writeBatch(
       events: DataSyncEvent[],
       cursor: string | null
     ): Promise<BulkWriteResult> {
-      const client = await pool.connect();
+      const client = await getClient();
 
       try {
         return await writeBatchWithClient(client, events, cursor);
-      } finally {
-        client.release();
+      } catch (error) {
+        releaseCachedClient();
+        throw error;
       }
+    },
+    async close(): Promise<void> {
+      releaseCachedClient();
     }
   };
 }
