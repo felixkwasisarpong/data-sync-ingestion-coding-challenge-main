@@ -217,6 +217,7 @@ export function createEventsClient(
       };
 
       const applyRateLimitPacing = (headers: Headers): void => {
+        const limit = parseNumericHeaderValue(headers.get("X-RateLimit-Limit"));
         const remaining = parseNumericHeaderValue(
           headers.get("X-RateLimit-Remaining")
         );
@@ -225,7 +226,7 @@ export function createEventsClient(
           now()
         );
 
-        if (remaining === null || resetMs === null) {
+        if (remaining === null || resetMs === null || resetMs <= 0) {
           return;
         }
 
@@ -234,7 +235,21 @@ export function createEventsClient(
             nextRequestAllowedAtMs,
             now() + resetMs
           );
+          return;
         }
+
+        const effectiveRemaining = Math.max(1, Math.floor(remaining));
+        const hasUsableLimit =
+          limit !== null && Number.isFinite(limit) && limit > 0;
+        const denominator = hasUsableLimit
+          ? Math.max(1, Math.min(effectiveRemaining + 1, Math.floor(limit)))
+          : effectiveRemaining + 1;
+        const spreadDelayMs = Math.max(1, Math.ceil(resetMs / denominator));
+
+        nextRequestAllowedAtMs = Math.max(
+          nextRequestAllowedAtMs,
+          now() + spreadDelayMs
+        );
       };
 
       while (true) {
