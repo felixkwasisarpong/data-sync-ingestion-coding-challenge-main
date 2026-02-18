@@ -240,6 +240,42 @@ describe("createEventsClient", () => {
     expect(sleepMock).toHaveBeenCalledWith(4000);
   });
 
+  it("prefers retry-after for 429 even when backoff is longer", async () => {
+    const sleepMock = vi.fn(async () => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: { "Retry-After": "1" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: false, nextCursor: null }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    const client = createEventsClient(
+      {
+        ...baseConfig,
+        apiRetryBaseMs: 5000,
+        apiRetryMaxMs: 5000
+      },
+      {
+        fetchImpl: fetchMock,
+        sleep: sleepMock,
+        random: () => 0
+      }
+    );
+
+    await client.fetchEventsPage(null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledWith(1000);
+  });
+
   it("paces next request when rate-limit remaining reaches zero", async () => {
     const sleepMock = vi.fn(async () => undefined);
     const fetchMock = vi
