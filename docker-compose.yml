@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: assignment-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -22,12 +21,22 @@ services:
     build:
       context: .
       dockerfile: packages/mock-api/Dockerfile
-    container_name: assignment-mock-api
     environment:
       PORT: 3100
       MOCK_TOTAL_EVENTS: 5000
     ports:
       - "3100:3100"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3100/health').then((response)=>{if(!response.ok){process.exit(1)}}).catch(()=>process.exit(1))"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - assignment-network
 
@@ -35,13 +44,12 @@ services:
     build:
       context: .
       dockerfile: packages/ingestion/Dockerfile
-    container_name: assignment-ingestion
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
       API_MODE: mock
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ingestion
-      API_BASE_URL: http://assignment-mock-api:3100/api/v1
+      API_BASE_URL: http://mock-api:3100/api/v1
       DATASYNC_API_KEY: mock-api-key
       API_PAGE_LIMIT: 1000
       API_TIMEOUT_MS: 10000
@@ -53,7 +61,7 @@ services:
       postgres:
         condition: service_healthy
       mock-api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - assignment-network
 

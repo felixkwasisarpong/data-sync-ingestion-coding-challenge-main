@@ -23,7 +23,7 @@ export function loadConfig(): IngestionConfig {
     apiMode: process.env.API_MODE === "live" ? "live" : "mock",
     apiBaseUrl:
       process.env.API_BASE_URL ??
-      "http://assignment-mock-api:3100/api/v1",
+      "http://mock-api:3100/api/v1",
     apiKey: process.env.DATASYNC_API_KEY ?? "mock-api-key",
     apiPageLimit: readInt("API_PAGE_LIMIT", 1000),
     apiTimeoutMs: readInt("API_TIMEOUT_MS", 10000),
