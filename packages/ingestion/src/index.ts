@@ -1,7 +1,10 @@
 import { loadConfig } from "./config";
+import { createEventsClient } from "./api/eventsClient";
 import { getCheckpointState } from "./db/checkpoint";
 import { runMigrations } from "./db/migrations";
 import { createPool } from "./db/pool";
+import { runPaginationLoop } from "./ingestion/pagination";
+import type { IngestionConfig } from "./types";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
@@ -10,8 +13,7 @@ interface BootstrapResult {
   totalIngested: number;
 }
 
-async function bootstrapDatabase(): Promise<BootstrapResult> {
-  const config = loadConfig();
+async function bootstrapDatabase(config: IngestionConfig): Promise<BootstrapResult> {
   const pool = createPool(config.databaseUrl);
 
   try {
@@ -32,12 +34,31 @@ async function bootstrapDatabase(): Promise<BootstrapResult> {
 }
 
 async function main(): Promise<void> {
-  const checkpoint = await bootstrapDatabase();
+  const config = loadConfig();
+  const checkpoint = await bootstrapDatabase(config);
+  const eventsClient = createEventsClient(config);
+
   console.log(
     `resume state loaded (cursor=${checkpoint.cursor ?? "null"}, totalIngested=${checkpoint.totalIngested})`
   );
 
-  // Milestone 3 keeps the container alive after loading resume state.
+  const paginationResult = await runPaginationLoop(
+    eventsClient,
+    checkpoint.cursor,
+    {
+      onPage(page, pageNumber) {
+        console.log(
+          `page fetched (page=${pageNumber}, size=${page.data.length}, hasMore=${page.hasMore}, nextCursor=${page.nextCursor ?? "null"})`
+        );
+      }
+    }
+  );
+
+  console.log(
+    `pagination loop complete (pages=${paginationResult.pagesFetched}, events=${paginationResult.eventsFetched}, finalCursor=${paginationResult.finalCursor ?? "null"})`
+  );
+
+  // Milestone 4 keeps the container alive after pagination loop validation.
   setInterval(() => {
     console.log("ingestion scaffold heartbeat");
   }, HEARTBEAT_INTERVAL_MS);
