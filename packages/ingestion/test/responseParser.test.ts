@@ -71,7 +71,33 @@ describe("parseEventsPage", () => {
     });
 
     expect(parsed.data[0].eventId).toBe("evt-live-2");
+    expect(parsed.data[0].occurredAt).toBe("2026-01-27T19:20:12.369Z");
     expect(parsed.hasMore).toBe(true);
     expect(parsed.nextCursor).toBe("snake-cursor");
+  });
+
+  it("normalizes microsecond and nanosecond timestamps", () => {
+    const parsed = parseEventsPage({
+      data: [
+        { id: "evt-micros", timestamp: 1769541612369000 },
+        { id: "evt-nanos", timestamp: 1769541612369000000 }
+      ],
+      hasMore: false,
+      nextCursor: null
+    });
+
+    expect(parsed.data[0].occurredAt).toBe("2026-01-27T19:20:12.369Z");
+    expect(parsed.data[1].occurredAt).toBe("2026-01-27T19:20:12.369Z");
+  });
+
+  it("does not throw for invalid numeric timestamps", () => {
+    const parsed = parseEventsPage({
+      data: [{ id: "evt-invalid-ts", timestamp: Number.POSITIVE_INFINITY }],
+      hasMore: false,
+      nextCursor: null
+    });
+
+    expect(parsed.data[0].eventId).toBe("evt-invalid-ts");
+    expect(parsed.data[0].occurredAt).toBeNull();
   });
 });
