@@ -238,6 +238,75 @@ describe("createEventsClient", () => {
     expect(sleepMock).toHaveBeenCalledWith(4000);
   });
 
+  it("paces next request when rate-limit remaining reaches zero", async () => {
+    const sleepMock = vi.fn(async () => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: true, nextCursor: "cursor-1" }),
+          {
+            status: 200,
+            headers: {
+              "X-RateLimit-Remaining": "0",
+              "X-RateLimit-Reset": "2"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: false, nextCursor: null }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    const client = createEventsClient(baseConfig, {
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      now: () => 0
+    });
+
+    await client.fetchEventsPage(null);
+    await client.fetchEventsPage("cursor-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledWith(2000);
+  });
+
+  it("interprets x-ratelimit-reset epoch seconds on 429", async () => {
+    const sleepMock = vi.fn(async () => undefined);
+    const nowMs = Date.parse("2026-02-18T00:00:00.000Z");
+    const resetEpochSeconds = Math.floor((nowMs + 3000) / 1000);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: { "X-RateLimit-Reset": String(resetEpochSeconds) }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: false, nextCursor: null }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    const client = createEventsClient(baseConfig, {
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      now: () => nowMs,
+      random: () => 0
+    });
+
+    await client.fetchEventsPage(null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledWith(3000);
+  });
+
   it("retries timed out requests", async () => {
     vi.useFakeTimers();
 
