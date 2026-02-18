@@ -312,9 +312,10 @@ export function createEventsClient(
           config.apiRetryMaxMs,
           random
         );
-        const retryDelayMs = isRateLimited
-          ? Math.max(retryAfterMs ?? 0, backoffDelayMs)
-          : retryAfterMs ?? backoffDelayMs;
+        const retryDelayMs =
+          isRateLimited && retryAfterMs !== null
+            ? retryAfterMs
+            : retryAfterMs ?? backoffDelayMs;
 
         if (isRateLimited) {
           applyRateLimitPacing(response.headers);
