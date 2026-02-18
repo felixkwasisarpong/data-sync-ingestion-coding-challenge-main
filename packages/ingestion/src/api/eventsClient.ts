@@ -54,6 +54,76 @@ function createErrorMessage(status: number, body: string): string {
   return `Events API request failed with status ${status}: ${body}`;
 }
 
+interface RateLimitBody {
+  retryAfter?: unknown;
+  reset?: unknown;
+}
+
+interface ErrorBodyShape {
+  rateLimit?: RateLimitBody;
+}
+
+function parseRetryAfterMsFromRateLimitBody(body: string): number | null {
+  if (!body) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(body) as ErrorBodyShape;
+    const rateLimit = parsed.rateLimit;
+
+    if (!rateLimit) {
+      return null;
+    }
+
+    const retryAfter = rateLimit.retryAfter;
+    if (typeof retryAfter === "number" && Number.isFinite(retryAfter)) {
+      return Math.max(0, Math.floor(retryAfter * 1000));
+    }
+
+    if (typeof retryAfter === "string") {
+      const asNumber = Number(retryAfter);
+      if (!Number.isNaN(asNumber)) {
+        return Math.max(0, Math.floor(asNumber * 1000));
+      }
+    }
+
+    const reset = rateLimit.reset;
+    if (typeof reset === "number" && Number.isFinite(reset)) {
+      return Math.max(0, Math.floor(reset * 1000));
+    }
+
+    if (typeof reset === "string") {
+      const asNumber = Number(reset);
+      if (!Number.isNaN(asNumber)) {
+        return Math.max(0, Math.floor(asNumber * 1000));
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function parseRetryAfterMsFromResetHeader(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isNaN(numeric)) {
+    return null;
+  }
+
+  return Math.max(0, Math.floor(numeric * 1000));
+}
+
 function shouldRetryFetchError(error: unknown): boolean {
   if (error instanceof RequestTimeoutError) {
     return true;
@@ -124,7 +194,9 @@ export function createEventsClient(
         }
       };
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let attempt = 1;
+
+      while (true) {
         let response: Response;
 
         try {
@@ -146,6 +218,7 @@ export function createEventsClient(
             config.apiRetryMaxMs,
             random
           );
+          attempt += 1;
           await sleep(retryDelayMs);
           continue;
         }
@@ -156,8 +229,10 @@ export function createEventsClient(
         }
 
         const body = await response.text();
+        const isRateLimited = response.status === 429;
         const shouldRetryStatusCode =
-          isRetriableStatus(response.status) && attempt < maxAttempts;
+          isRateLimited ||
+          (isRetriableStatus(response.status) && attempt < maxAttempts);
 
         if (!shouldRetryStatusCode) {
           throw new Error(createErrorMessage(response.status, body));
@@ -165,21 +240,26 @@ export function createEventsClient(
 
         const retryAfterMs =
           response.status === 429
-            ? parseRetryAfterMs(response.headers.get("Retry-After"), now())
+            ? parseRetryAfterMs(response.headers.get("Retry-After"), now()) ??
+              parseRetryAfterMsFromRateLimitBody(body) ??
+              parseRetryAfterMsFromResetHeader(
+                response.headers.get("X-RateLimit-Reset")
+              )
             : null;
-        const retryDelayMs =
-          retryAfterMs ??
-          computeExponentialBackoffMs(
-            attempt,
-            config.apiRetryBaseMs,
-            config.apiRetryMaxMs,
-            random
-          );
+        const backoffDelayMs = computeExponentialBackoffMs(
+          attempt,
+          config.apiRetryBaseMs,
+          config.apiRetryMaxMs,
+          random
+        );
+        const retryDelayMs = isRateLimited
+          ? Math.max(retryAfterMs ?? 0, backoffDelayMs)
+          : retryAfterMs ?? backoffDelayMs;
+
+        attempt += 1;
 
         await sleep(retryDelayMs);
       }
-
-      throw new Error("Events API request exhausted retries");
     }
   };
 }
