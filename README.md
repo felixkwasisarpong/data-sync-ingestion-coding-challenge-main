@@ -158,24 +158,39 @@ When ready for live run:
 1. Set `API_MODE=live`
 2. Set `DATASYNC_API_KEY`
 3. Set `API_BASE_URL` to live endpoint
-4. Make one discovery request with `limit=5`
-5. Log headers and response shape
-6. Proceed with full ingestion
+4. Start ingestion (`npm run ingest` or `sh run-ingestion.sh`)
+5. The worker automatically performs exactly one startup discovery request with `limit=5`
+6. The worker logs:
+   - discovery headers
+   - discovery response shape
+7. The worker then proceeds to full buffered ingestion
 
 ## Submission Helpers
 
-Current placeholder commands:
+Prepare event ID export from Postgres:
 
 ```bash
 npm run submit:prepare
+```
+
+Submit prepared IDs to DataSync:
+
+```bash
 npm run submit:send
 ```
 
-These are scaffolds and should be implemented/finalized when submission flow is wired.
+Required environment variables for submission:
+- `SUBMISSION_GITHUB_REPO_URL`
+- `DATASYNC_API_KEY`
+- `API_BASE_URL` (live API base)
+
+Optional:
+- `SUBMISSION_INPUT_FILE` (default: `submission/event_ids.txt`)
+- `SUBMISSION_PREPARE_BATCH_SIZE` (default: `50000`)
 
 ## Trade-offs and Future Improvements
 
 - Keep-alive transport tuning can be further optimized for maximum throughput.
 - Dynamic batch size adaptation based on DB latency/backpressure is not yet implemented.
 - Metrics endpoint and richer health telemetry are pending.
-- Submission helper scripts are placeholders and need final implementation for automated submission packaging.
+- Submission sender currently posts plaintext payload loaded from file; stream-based upload can reduce memory usage for larger files.
