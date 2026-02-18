@@ -14,6 +14,7 @@ const baseConfig: IngestionConfig = {
   apiRetryBaseMs: 100,
   apiRetryMaxMs: 1000,
   writeBatchSize: 100,
+  progressLogIntervalMs: 5000,
   logLevel: "info"
 };
 
@@ -272,6 +273,43 @@ describe("createEventsClient", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sleepMock).toHaveBeenCalledWith(2000);
+  });
+
+  it("spreads request pacing when rate-limit remaining is above zero", async () => {
+    const sleepMock = vi.fn(async () => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: true, nextCursor: "cursor-1" }),
+          {
+            status: 200,
+            headers: {
+              "X-RateLimit-Limit": "10",
+              "X-RateLimit-Remaining": "3",
+              "X-RateLimit-Reset": "2"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: false, nextCursor: null }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    const client = createEventsClient(baseConfig, {
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      now: () => 0
+    });
+
+    await client.fetchEventsPage(null);
+    await client.fetchEventsPage("cursor-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledWith(500);
   });
 
   it("interprets x-ratelimit-reset epoch seconds on 429", async () => {
