@@ -18,20 +18,36 @@ echo "(Press Ctrl+C to stop monitoring)"
 echo "=============================================="
 
 while true; do
-  if docker logs assignment-ingestion 2>&1 | grep -q "ingestion complete" 2>/dev/null; then
+  COUNT=$(docker compose exec -T postgres psql -U postgres -d ingestion -t -A -c "SELECT COUNT(*) FROM ingested_events;" 2>/dev/null || echo "0")
+
+  if docker compose logs ingestion 2>&1 | grep -q "ingestion complete" 2>/dev/null; then
     echo ""
     echo "=============================================="
     echo "INGESTION COMPLETE!"
+    echo "Total events: $COUNT"
     echo "=============================================="
     exit 0
   fi
 
-  if ! docker ps --format '{{.Names}}' | grep -q '^assignment-ingestion$'; then
+  CONTAINER_ID=$(docker compose ps -a -q ingestion 2>/dev/null || true)
+
+  if [ -z "$CONTAINER_ID" ]; then
     echo ""
-    echo "Ingestion container is not running. Check logs with: docker logs assignment-ingestion"
+    echo "Ingestion container was not found."
     exit 1
   fi
 
-  echo "[$(date '+%H:%M:%S')] ingestion in progress"
+  STATUS=$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID")
+  EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER_ID")
+
+  if [ "$STATUS" = "exited" ] || [ "$STATUS" = "dead" ]; then
+    echo ""
+    echo "Ingestion container stopped unexpectedly (status=$STATUS, exitCode=$EXIT_CODE)."
+    echo "Last logs:"
+    docker compose logs --tail 100 ingestion || true
+    exit 1
+  fi
+
+  echo "[$(date '+%H:%M:%S')] Events ingested: $COUNT"
   sleep 5
 done
