@@ -105,6 +105,7 @@ async function main(): Promise<void> {
       `buffered ingestion loop complete (pages=${ingestionResult.pagesFetched}, events=${ingestionResult.eventsFetched}, inserted=${ingestionResult.insertedCount}, flushes=${ingestionResult.flushes}, finalCursor=${ingestionResult.finalCursor ?? "null"})`
     );
   } finally {
+    await bulkWriter.close?.();
     await pool.end();
   }
 

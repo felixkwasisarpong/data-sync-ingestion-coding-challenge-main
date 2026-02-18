@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MAX_INSERT_EVENTS_PER_STATEMENT,
   buildBulkInsertStatement,
+  createBulkWriter,
   writeBatchWithClient
 } from "../src/db/bulkWriter";
 
@@ -286,5 +287,110 @@ describe("writeBatchWithClient", () => {
       expect.stringContaining("UPDATE ingestion_state"),
       ["cursor-large", MAX_INSERT_EVENTS_PER_STATEMENT + 7]
     );
+  });
+});
+
+describe("createBulkWriter", () => {
+  it("reuses one pool client across multiple writes and releases on close", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text === "BEGIN" || text === "COMMIT") {
+        return { rowCount: null, rows: [] };
+      }
+
+      if (text.includes("UPDATE ingestion_state")) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: 1,
+              cursor: null,
+              total_ingested: "0",
+              updated_at: new Date("2026-01-01T00:00:00.000Z")
+            }
+          ]
+        };
+      }
+
+      throw new Error(`Unexpected SQL: ${text}`);
+    });
+
+    const release = vi.fn();
+    const client = { query, release };
+    const connect = vi.fn(async () => client);
+    const pool = { connect };
+
+    const writer = createBulkWriter(pool as never);
+
+    await writer.writeBatch([], null);
+    await writer.writeBatch([], null);
+
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+
+    await writer.close?.();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconnects after a failed write on cached client", async () => {
+    const firstClient = {
+      query: vi.fn(async (text: string) => {
+        if (text === "BEGIN") {
+          return { rowCount: null, rows: [] };
+        }
+
+        if (text.includes("UPDATE ingestion_state")) {
+          throw new Error("checkpoint failure");
+        }
+
+        if (text === "ROLLBACK") {
+          return { rowCount: null, rows: [] };
+        }
+
+        throw new Error(`Unexpected SQL (first client): ${text}`);
+      }),
+      release: vi.fn()
+    };
+
+    const secondClient = {
+      query: vi.fn(async (text: string) => {
+        if (text === "BEGIN" || text === "COMMIT") {
+          return { rowCount: null, rows: [] };
+        }
+
+        if (text.includes("UPDATE ingestion_state")) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                id: 1,
+                cursor: null,
+                total_ingested: "0",
+                updated_at: new Date("2026-01-01T00:00:00.000Z")
+              }
+            ]
+          };
+        }
+
+        throw new Error(`Unexpected SQL (second client): ${text}`);
+      }),
+      release: vi.fn()
+    };
+
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce(firstClient)
+      .mockResolvedValueOnce(secondClient);
+    const pool = { connect };
+
+    const writer = createBulkWriter(pool as never);
+
+    await expect(writer.writeBatch([], null)).rejects.toThrow("checkpoint failure");
+    expect(firstClient.release).toHaveBeenCalledTimes(1);
+
+    await writer.writeBatch([], null);
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    await writer.close?.();
+    expect(secondClient.release).toHaveBeenCalledTimes(1);
   });
 });
