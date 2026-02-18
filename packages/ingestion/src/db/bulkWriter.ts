@@ -1,4 +1,4 @@
-import type { Pool, PoolClient, QueryResult } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { advanceCheckpoint } from "./checkpoint";
 import type { CheckpointState, DataSyncEvent } from "../types";
@@ -9,13 +9,8 @@ VALUES
 `;
 
 const INSERT_EVENTS_SUFFIX = `
-ON CONFLICT (event_id) DO NOTHING
-RETURNING event_id;
+ON CONFLICT (event_id) DO NOTHING;
 `;
-
-interface InsertResultRow {
-  event_id: string;
-}
 
 export interface BulkWriteResult {
   insertedCount: number;
@@ -81,12 +76,12 @@ export async function writeBatchWithClient(
 
     if (events.length > 0) {
       const statement = buildBulkInsertStatement(events);
-      const insertResult = (await client.query(
+      const insertResult = await client.query(
         statement.sql,
         statement.values
-      )) as QueryResult<InsertResultRow>;
+      );
 
-      insertedCount = insertResult.rowCount ?? insertResult.rows.length;
+      insertedCount = insertResult.rowCount ?? 0;
     }
 
     const checkpoint = await advanceCheckpoint(client, cursor, insertedCount);
