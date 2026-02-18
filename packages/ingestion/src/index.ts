@@ -1,5 +1,6 @@
 import { loadConfig } from "./config";
 import { createEventsClient } from "./api/eventsClient";
+import { runLiveDiscovery } from "./api/liveDiscovery";
 import { createBulkWriter } from "./db/bulkWriter";
 import { getCheckpointState } from "./db/checkpoint";
 import { runMigrations } from "./db/migrations";
@@ -42,6 +43,17 @@ async function main(): Promise<void> {
   console.log(
     `resume state loaded (cursor=${checkpoint.cursor ?? "null"}, totalIngested=${checkpoint.totalIngested})`
   );
+
+  if (config.apiMode === "live") {
+    const discovery = await runLiveDiscovery(config);
+    console.log(
+      `live discovery complete (limit=5, sampleSize=${discovery.sampleSize}, hasMore=${discovery.hasMore}, nextCursor=${discovery.nextCursor ?? "null"})`
+    );
+    console.log(`live discovery headers: ${JSON.stringify(discovery.headers)}`);
+    console.log(
+      `live discovery response shape: ${JSON.stringify(discovery.responseShape)}`
+    );
+  }
 
   try {
     const ingestionResult = await runBufferedIngestion(
