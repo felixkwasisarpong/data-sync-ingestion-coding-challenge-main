@@ -4,6 +4,7 @@ import { loadConfig } from "../src/config";
 
 const originalApiMode = process.env.API_MODE;
 const originalApiPageLimit = process.env.API_PAGE_LIMIT;
+const originalLiveDiscoveryOnResume = process.env.LIVE_DISCOVERY_ON_RESUME;
 
 afterEach(() => {
   if (originalApiMode === undefined) {
@@ -16,6 +17,12 @@ afterEach(() => {
     delete process.env.API_PAGE_LIMIT;
   } else {
     process.env.API_PAGE_LIMIT = originalApiPageLimit;
+  }
+
+  if (originalLiveDiscoveryOnResume === undefined) {
+    delete process.env.LIVE_DISCOVERY_ON_RESUME;
+  } else {
+    process.env.LIVE_DISCOVERY_ON_RESUME = originalLiveDiscoveryOnResume;
   }
 });
 
@@ -30,6 +37,7 @@ describe("loadConfig", () => {
     expect(config.apiPageLimit).toBe(1000);
     expect(config.writeBatchSize).toBe(10000);
     expect(config.progressLogIntervalMs).toBe(5000);
+    expect(config.liveDiscoveryOnResume).toBe(false);
     expect(config.databaseUrl).toContain("postgresql://postgres:postgres");
   });
 
@@ -41,5 +49,13 @@ describe("loadConfig", () => {
 
     expect(config.apiMode).toBe("live");
     expect(config.apiPageLimit).toBe(5000);
+  });
+
+  it("parses live discovery resume override", () => {
+    process.env.LIVE_DISCOVERY_ON_RESUME = "true";
+
+    const config = loadConfig();
+
+    expect(config.liveDiscoveryOnResume).toBe(true);
   });
 });

@@ -15,6 +15,35 @@ function readInt(name: string, fallback: number): number {
   return parsed;
 }
 
+function readBoolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "on"
+  ) {
+    return true;
+  }
+
+  if (
+    normalized === "0" ||
+    normalized === "false" ||
+    normalized === "no" ||
+    normalized === "off"
+  ) {
+    return false;
+  }
+
+  throw new Error(`Invalid boolean for ${name}: ${raw}`);
+}
+
 function readApiPageLimit(apiMode: "mock" | "live"): number {
   const fallback = apiMode === "live" ? 5000 : 1000;
   return readInt("API_PAGE_LIMIT", fallback);
@@ -39,6 +68,7 @@ export function loadConfig(): IngestionConfig {
     apiRetryMaxMs: readInt("API_RETRY_MAX_MS", 5000),
     writeBatchSize: readInt("WRITE_BATCH_SIZE", 10000),
     progressLogIntervalMs: readInt("PROGRESS_LOG_INTERVAL_MS", 5000),
+    liveDiscoveryOnResume: readBoolean("LIVE_DISCOVERY_ON_RESUME", false),
     logLevel: process.env.LOG_LEVEL ?? "info"
   };
 }
