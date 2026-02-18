@@ -7,7 +7,7 @@ import {
 } from "../src/db/bulkWriter";
 
 describe("buildBulkInsertStatement", () => {
-  it("builds multi-row insert with positional parameters", () => {
+  it("builds UNNEST insert with column arrays", () => {
     const statement = buildBulkInsertStatement([
       {
         eventId: "evt-1",
@@ -21,26 +21,28 @@ describe("buildBulkInsertStatement", () => {
       }
     ]);
 
-    expect(statement.sql).toContain("($1, $2, $3)");
-    expect(statement.sql).toContain("($4, $5, $6)");
+    expect(statement.sql).toContain(
+      "FROM UNNEST($1::text[], $2::timestamptz[], $3::jsonb[])"
+    );
     expect(statement.sql).toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(statement.sql).not.toContain("VALUES");
     expect(statement.sql).not.toContain("RETURNING");
 
     expect(statement.values).toEqual([
-      "evt-1",
-      "2026-01-01T00:00:00.000Z",
-      {
-        eventId: "evt-1",
-        occurredAt: "2026-01-01T00:00:00.000Z",
-        foo: "bar"
-      },
-      "evt-2",
-      null,
-      {
-        eventId: "evt-2",
-        occurredAt: "invalid-timestamp",
-        alpha: 1
-      }
+      ["evt-1", "evt-2"],
+      ["2026-01-01T00:00:00.000Z", null],
+      [
+        JSON.stringify({
+          eventId: "evt-1",
+          occurredAt: "2026-01-01T00:00:00.000Z",
+          foo: "bar"
+        }),
+        JSON.stringify({
+          eventId: "evt-2",
+          occurredAt: "invalid-timestamp",
+          alpha: 1
+        })
+      ]
     ]);
   });
 
@@ -228,7 +230,9 @@ describe("writeBatchWithClient", () => {
       }
 
       if (text.includes("INSERT INTO ingested_events")) {
-        const chunkSize = Math.floor((values?.length ?? 0) / 3);
+        const chunkSize = Array.isArray(values?.[0])
+          ? (values?.[0] as unknown[]).length
+          : 0;
         return { rowCount: chunkSize, rows: [] };
       }
 
@@ -273,10 +277,10 @@ describe("writeBatchWithClient", () => {
     );
 
     expect(insertCalls).toHaveLength(2);
-    expect((insertCalls[0][1] as unknown[]).length / 3).toBe(
+    expect(((insertCalls[0][1] as unknown[])[0] as unknown[]).length).toBe(
       MAX_INSERT_EVENTS_PER_STATEMENT
     );
-    expect((insertCalls[1][1] as unknown[]).length / 3).toBe(7);
+    expect(((insertCalls[1][1] as unknown[])[0] as unknown[]).length).toBe(7);
     expect(result.insertedCount).toBe(MAX_INSERT_EVENTS_PER_STATEMENT + 7);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE ingestion_state"),

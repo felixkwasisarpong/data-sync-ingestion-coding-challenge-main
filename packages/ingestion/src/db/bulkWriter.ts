@@ -3,16 +3,14 @@ import type { Pool, PoolClient } from "pg";
 import { advanceCheckpoint } from "./checkpoint";
 import type { CheckpointState, DataSyncEvent } from "../types";
 
-const INSERT_EVENTS_PREFIX = `
+const INSERT_EVENTS_SQL = `
 INSERT INTO ingested_events (event_id, occurred_at, payload)
-VALUES
-`;
-
-const INSERT_EVENTS_SUFFIX = `
+SELECT event_id, occurred_at, payload
+FROM UNNEST($1::text[], $2::timestamptz[], $3::jsonb[]) AS rows(event_id, occurred_at, payload)
 ON CONFLICT (event_id) DO NOTHING;
 `;
 
-export const MAX_INSERT_EVENTS_PER_STATEMENT = 15000;
+export const MAX_INSERT_EVENTS_PER_STATEMENT = 25000;
 
 export interface BulkWriteResult {
   insertedCount: number;
@@ -47,22 +45,20 @@ export function buildBulkInsertStatement(events: DataSyncEvent[]): {
     throw new Error("Cannot build insert statement for empty event batch");
   }
 
-  const values: unknown[] = [];
-  const tuples: string[] = [];
+  const eventIds: string[] = [];
+  const occurredAts: Array<string | null> = [];
+  const payloads: string[] = [];
 
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
-    const base = index * 3;
-
-    tuples.push(`($${base + 1}, $${base + 2}, $${base + 3})`);
-    values.push(event.eventId);
-    values.push(normalizeOccurredAt(event.occurredAt));
-    values.push(event);
+    eventIds.push(event.eventId);
+    occurredAts.push(normalizeOccurredAt(event.occurredAt));
+    payloads.push(JSON.stringify(event));
   }
 
   return {
-    sql: `${INSERT_EVENTS_PREFIX}${tuples.join(",\n")}\n${INSERT_EVENTS_SUFFIX}`,
-    values
+    sql: INSERT_EVENTS_SQL,
+    values: [eventIds, occurredAts, payloads]
   };
 }
 
