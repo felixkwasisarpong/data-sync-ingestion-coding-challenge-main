@@ -194,3 +194,7 @@ Optional:
 - Dynamic batch size adaptation based on DB latency/backpressure is not yet implemented.
 - Metrics endpoint and richer health telemetry are pending.
 - Submission sender currently posts plaintext payload loaded from file; stream-based upload can reduce memory usage for larger files.
+
+
+# AI tooling (codex)
+AI tooling was used to accelerate implementation tasks such as scaffolding and initial test generation. The ingestion architecture, retry/backoff strategy, checkpoint design, throughput tuning, and validation of the 3,000,000-event ingestion were designed, reviewed, and finalized by me.
