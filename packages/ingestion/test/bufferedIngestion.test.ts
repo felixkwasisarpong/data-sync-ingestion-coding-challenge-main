@@ -195,4 +195,92 @@ describe("runBufferedIngestion", () => {
     expect(writeBatch).toHaveBeenCalledTimes(1);
     expect(writeBatch.mock.calls[0][1]).toBeNull();
   });
+
+  it("overlaps fetches with pending batch write", async () => {
+    const pages = [
+      {
+        data: [{ eventId: "evt-1" }],
+        hasMore: true,
+        nextCursor: "cursor-1"
+      },
+      {
+        data: [{ eventId: "evt-2" }],
+        hasMore: true,
+        nextCursor: "cursor-2"
+      },
+      {
+        data: [{ eventId: "evt-3" }],
+        hasMore: false,
+        nextCursor: null
+      }
+    ];
+
+    let pageIndex = 0;
+    const fetchHistory: number[] = [];
+
+    const client = {
+      async fetchEventsPage() {
+        fetchHistory.push(pageIndex);
+        const page = pages[pageIndex];
+        pageIndex += 1;
+        return page;
+      }
+    };
+
+    let resolveFirstWrite: (() => void) | null = null;
+    const firstWriteDone = new Promise<void>((resolve) => {
+      resolveFirstWrite = resolve;
+    });
+
+    const writeBatch = vi
+      .fn()
+      .mockImplementationOnce(
+        async (events: Array<{ eventId: string }>) =>
+          await new Promise((resolve) => {
+            firstWriteDone.then(() =>
+              resolve({
+                insertedCount: events.length,
+                checkpoint: {
+                  id: 1 as const,
+                  cursor: "cursor-2",
+                  totalIngested: events.length,
+                  updatedAt: "2026-01-01T00:00:00.000Z"
+                }
+              })
+            );
+          })
+      )
+      .mockImplementationOnce(async (events: Array<{ eventId: string }>) => ({
+        insertedCount: events.length,
+        checkpoint: {
+          id: 1 as const,
+          cursor: null,
+          totalIngested: events.length,
+          updatedAt: "2026-01-01T00:00:00.000Z"
+        }
+      }));
+
+    const ingestionPromise = runBufferedIngestion(
+      client,
+      { writeBatch },
+      {
+        startCursor: null,
+        batchSize: 2
+      }
+    );
+
+    await vi.waitFor(() => {
+      expect(fetchHistory).toContain(2);
+    });
+
+    expect(writeBatch).toHaveBeenCalledTimes(1);
+
+    resolveFirstWrite?.();
+
+    const result = await ingestionPromise;
+
+    expect(result.eventsFetched).toBe(3);
+    expect(result.insertedCount).toBe(3);
+    expect(writeBatch).toHaveBeenCalledTimes(2);
+  });
 });

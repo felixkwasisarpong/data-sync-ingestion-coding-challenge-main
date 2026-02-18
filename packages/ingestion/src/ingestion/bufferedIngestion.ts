@@ -54,6 +54,47 @@ export async function runBufferedIngestion(
 
   let buffer: DataSyncEvent[] = [];
   let bufferCursor = cursor;
+  let pendingFlush: {
+    batchSize: number;
+    cursor: string | null;
+    flushNumber: number;
+    promise: Promise<{ insertedCount: number }>;
+  } | null = null;
+
+  const settlePendingFlush = async (): Promise<void> => {
+    if (!pendingFlush) {
+      return;
+    }
+
+    const current = pendingFlush;
+    pendingFlush = null;
+
+    const writeResult = await current.promise;
+    insertedCount += writeResult.insertedCount;
+
+    options.hooks?.onFlush?.({
+      batchSize: current.batchSize,
+      insertedCount: writeResult.insertedCount,
+      cursor: current.cursor,
+      flushNumber: current.flushNumber
+    });
+  };
+
+  const queueFlush = async (
+    events: DataSyncEvent[],
+    nextCursor: string | null
+  ): Promise<void> => {
+    await settlePendingFlush();
+
+    flushes += 1;
+    const flushNumber = flushes;
+    pendingFlush = {
+      batchSize: events.length,
+      cursor: nextCursor,
+      flushNumber,
+      promise: writer.writeBatch(events, nextCursor)
+    };
+  };
 
   while (true) {
     let page: EventsPage;
@@ -73,6 +114,7 @@ export async function runBufferedIngestion(
         continue;
       }
 
+      await settlePendingFlush();
       throw error;
     }
 
@@ -90,19 +132,11 @@ export async function runBufferedIngestion(
       const batch = buffer;
       buffer = [];
 
-      const writeResult = await writer.writeBatch(batch, bufferCursor);
-      insertedCount += writeResult.insertedCount;
-      flushes += 1;
-
-      options.hooks?.onFlush?.({
-        batchSize: batch.length,
-        insertedCount: writeResult.insertedCount,
-        cursor: bufferCursor,
-        flushNumber: flushes
-      });
+      await queueFlush(batch, bufferCursor);
     }
 
     if (!page.hasMore) {
+      await settlePendingFlush();
       return {
         pagesFetched,
         eventsFetched,

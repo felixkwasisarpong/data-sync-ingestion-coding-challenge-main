@@ -63,6 +63,36 @@ interface ErrorBodyShape {
   rateLimit?: RateLimitBody;
 }
 
+function parseNumericHeaderValue(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const numeric = Number(value.trim());
+  if (Number.isNaN(numeric)) {
+    return null;
+  }
+
+  return numeric;
+}
+
+function parseRateLimitResetMs(value: string | null, nowMs: number): number | null {
+  const numeric = parseNumericHeaderValue(value);
+  if (numeric === null) {
+    return parseRetryAfterMs(value, nowMs);
+  }
+
+  if (numeric >= 1_000_000_000_000) {
+    return Math.max(0, Math.floor(numeric - nowMs));
+  }
+
+  if (numeric >= 1_000_000_000) {
+    return Math.max(0, Math.floor(numeric * 1000 - nowMs));
+  }
+
+  return Math.max(0, Math.floor(numeric * 1000));
+}
+
 function parseRetryAfterMsFromRateLimitBody(body: string): number | null {
   if (!body) {
     return null;
@@ -104,24 +134,6 @@ function parseRetryAfterMsFromRateLimitBody(body: string): number | null {
   }
 
   return null;
-}
-
-function parseRetryAfterMsFromResetHeader(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const numeric = Number(trimmed);
-  if (Number.isNaN(numeric)) {
-    return null;
-  }
-
-  return Math.max(0, Math.floor(numeric * 1000));
 }
 
 function shouldRetryFetchError(error: unknown): boolean {
@@ -178,6 +190,7 @@ export function createEventsClient(
   const now = dependencies.now ?? Date.now;
   const random = dependencies.random ?? Math.random;
   const maxAttempts = Math.max(1, config.apiMaxRetries + 1);
+  let nextRequestAllowedAtMs = 0;
 
   return {
     async fetchEventsPage(cursor: string | null): Promise<EventsPage> {
@@ -196,7 +209,37 @@ export function createEventsClient(
 
       let attempt = 1;
 
+      const waitForRateLimitWindow = async (): Promise<void> => {
+        const waitMs = Math.max(0, nextRequestAllowedAtMs - now());
+        if (waitMs > 0) {
+          await sleep(waitMs);
+        }
+      };
+
+      const applyRateLimitPacing = (headers: Headers): void => {
+        const remaining = parseNumericHeaderValue(
+          headers.get("X-RateLimit-Remaining")
+        );
+        const resetMs = parseRateLimitResetMs(
+          headers.get("X-RateLimit-Reset"),
+          now()
+        );
+
+        if (remaining === null || resetMs === null) {
+          return;
+        }
+
+        if (remaining <= 0) {
+          nextRequestAllowedAtMs = Math.max(
+            nextRequestAllowedAtMs,
+            now() + resetMs
+          );
+        }
+      };
+
       while (true) {
+        await waitForRateLimitWindow();
+
         let response: Response;
 
         try {
@@ -224,6 +267,7 @@ export function createEventsClient(
         }
 
         if (response.ok) {
+          applyRateLimitPacing(response.headers);
           const payload = (await response.json()) as unknown;
           return parseEventsPage(payload);
         }
@@ -242,8 +286,9 @@ export function createEventsClient(
           response.status === 429
             ? parseRetryAfterMs(response.headers.get("Retry-After"), now()) ??
               parseRetryAfterMsFromRateLimitBody(body) ??
-              parseRetryAfterMsFromResetHeader(
-                response.headers.get("X-RateLimit-Reset")
+              parseRateLimitResetMs(
+                response.headers.get("X-RateLimit-Reset"),
+                now()
               )
             : null;
         const backoffDelayMs = computeExponentialBackoffMs(
@@ -255,6 +300,10 @@ export function createEventsClient(
         const retryDelayMs = isRateLimited
           ? Math.max(retryAfterMs ?? 0, backoffDelayMs)
           : retryAfterMs ?? backoffDelayMs;
+
+        if (isRateLimited) {
+          applyRateLimitPacing(response.headers);
+        }
 
         attempt += 1;
 
