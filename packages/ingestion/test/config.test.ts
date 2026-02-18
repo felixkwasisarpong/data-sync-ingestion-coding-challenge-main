@@ -11,6 +11,7 @@ describe("loadConfig", () => {
 
     expect(config.apiMode).toBe("mock");
     expect(config.apiPageLimit).toBe(1000);
+    expect(config.progressLogIntervalMs).toBe(5000);
     expect(config.databaseUrl).toContain("postgresql://postgres:postgres");
   });
 });
