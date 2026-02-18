@@ -11,6 +11,7 @@ ON CONFLICT (event_id) DO NOTHING;
 `;
 
 export const MAX_INSERT_EVENTS_PER_STATEMENT = 25000;
+export const INSERT_EVENTS_QUERY_NAME = "insert_ingested_events_unnest_v1";
 
 export interface BulkWriteResult {
   insertedCount: number;
@@ -106,10 +107,11 @@ export async function writeBatchWithClient(
           index + MAX_INSERT_EVENTS_PER_STATEMENT
         );
         const statement = buildBulkInsertStatement(chunk);
-        const insertResult = await client.query(
-          statement.sql,
-          statement.values
-        );
+        const insertResult = await client.query({
+          name: INSERT_EVENTS_QUERY_NAME,
+          text: statement.sql,
+          values: statement.values
+        });
         insertedCount += insertResult.rowCount ?? 0;
       }
     }

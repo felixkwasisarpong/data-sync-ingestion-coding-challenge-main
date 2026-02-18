@@ -1,12 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  INSERT_EVENTS_QUERY_NAME,
   MAX_INSERT_EVENTS_PER_STATEMENT,
   buildBulkInsertStatement,
   createBulkWriter,
   dedupeEventsById,
   writeBatchWithClient
 } from "../src/db/bulkWriter";
+
+function asQueryText(arg: unknown): string {
+  if (typeof arg === "string") {
+    return arg;
+  }
+
+  if (
+    typeof arg === "object" &&
+    arg !== null &&
+    "text" in arg &&
+    typeof (arg as { text: unknown }).text === "string"
+  ) {
+    return (arg as { text: string }).text;
+  }
+
+  throw new Error(`Unexpected query argument: ${String(arg)}`);
+}
+
+function asQueryValues(
+  arg: unknown,
+  values?: unknown[]
+): unknown[] | undefined {
+  if (typeof arg === "string") {
+    return values;
+  }
+
+  if (
+    typeof arg === "object" &&
+    arg !== null &&
+    "values" in arg &&
+    Array.isArray((arg as { values?: unknown[] }).values)
+  ) {
+    return (arg as { values: unknown[] }).values;
+  }
+
+  return undefined;
+}
 
 describe("buildBulkInsertStatement", () => {
   it("builds UNNEST insert with column arrays", () => {
@@ -75,12 +113,19 @@ describe("dedupeEventsById", () => {
 
 describe("writeBatchWithClient", () => {
   it("wraps insert and checkpoint update in a transaction", async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (arg: unknown, values?: unknown[]) => {
+      const text = asQueryText(arg);
+      const boundValues = asQueryValues(arg, values);
+
       if (text === "BEGIN" || text === "COMMIT") {
         return { rowCount: null, rows: [] };
       }
 
       if (text.includes("INSERT INTO ingested_events")) {
+        expect(arg).toMatchObject({
+          name: INSERT_EVENTS_QUERY_NAME
+        });
+        expect(Array.isArray(boundValues)).toBe(true);
         return { rowCount: 1, rows: [] };
       }
 
@@ -117,11 +162,11 @@ describe("writeBatchWithClient", () => {
     expect(result.checkpoint.totalIngested).toBe(101);
 
     expect(query).toHaveBeenNthCalledWith(1, "BEGIN");
-    expect(query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("INSERT INTO ingested_events"),
-      expect.any(Array)
-    );
+    expect(query).toHaveBeenNthCalledWith(2, {
+      name: INSERT_EVENTS_QUERY_NAME,
+      text: expect.stringContaining("INSERT INTO ingested_events"),
+      values: expect.any(Array)
+    });
     expect(query).toHaveBeenNthCalledWith(
       3,
       expect.stringContaining("UPDATE ingestion_state"),
@@ -131,7 +176,9 @@ describe("writeBatchWithClient", () => {
   });
 
   it("updates checkpoint even when batch is empty", async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (arg: unknown, values?: unknown[]) => {
+      const text = asQueryText(arg);
+
       if (text === "BEGIN" || text === "COMMIT") {
         return { rowCount: null, rows: [] };
       }
@@ -169,7 +216,9 @@ describe("writeBatchWithClient", () => {
   });
 
   it("rolls back on errors", async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (arg: unknown) => {
+      const text = asQueryText(arg);
+
       if (text === "BEGIN") {
         return { rowCount: null, rows: [] };
       }
@@ -198,7 +247,9 @@ describe("writeBatchWithClient", () => {
   });
 
   it("uses rowCount as inserted count when conflicts are ignored", async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (arg: unknown) => {
+      const text = asQueryText(arg);
+
       if (text === "BEGIN" || text === "COMMIT") {
         return { rowCount: null, rows: [] };
       }
@@ -244,14 +295,17 @@ describe("writeBatchWithClient", () => {
   });
 
   it("chunks large inserts and aggregates inserted count", async () => {
-    const query = vi.fn(async (text: string, values?: unknown[]) => {
+    const query = vi.fn(async (arg: unknown, values?: unknown[]) => {
+      const text = asQueryText(arg);
+      const boundValues = asQueryValues(arg, values);
+
       if (text === "BEGIN" || text === "COMMIT") {
         return { rowCount: null, rows: [] };
       }
 
       if (text.includes("INSERT INTO ingested_events")) {
-        const chunkSize = Array.isArray(values?.[0])
-          ? (values?.[0] as unknown[]).length
+        const chunkSize = Array.isArray(boundValues?.[0])
+          ? (boundValues?.[0] as unknown[]).length
           : 0;
         return { rowCount: chunkSize, rows: [] };
       }
@@ -293,14 +347,22 @@ describe("writeBatchWithClient", () => {
     );
 
     const insertCalls = query.mock.calls.filter((call) =>
-      String(call[0]).includes("INSERT INTO ingested_events")
+      asQueryText(call[0]).includes("INSERT INTO ingested_events")
     );
+    const firstInsertValues = asQueryValues(
+      insertCalls[0][0],
+      insertCalls[0][1] as unknown[]
+    ) as unknown[];
+    const secondInsertValues = asQueryValues(
+      insertCalls[1][0],
+      insertCalls[1][1] as unknown[]
+    ) as unknown[];
 
     expect(insertCalls).toHaveLength(2);
-    expect(((insertCalls[0][1] as unknown[])[0] as unknown[]).length).toBe(
+    expect((firstInsertValues[0] as unknown[]).length).toBe(
       MAX_INSERT_EVENTS_PER_STATEMENT
     );
-    expect(((insertCalls[1][1] as unknown[])[0] as unknown[]).length).toBe(7);
+    expect((secondInsertValues[0] as unknown[]).length).toBe(7);
     expect(result.insertedCount).toBe(MAX_INSERT_EVENTS_PER_STATEMENT + 7);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE ingestion_state"),
@@ -309,13 +371,16 @@ describe("writeBatchWithClient", () => {
   });
 
   it("deduplicates duplicate event ids before insert", async () => {
-    const query = vi.fn(async (text: string, values?: unknown[]) => {
+    const query = vi.fn(async (arg: unknown, values?: unknown[]) => {
+      const text = asQueryText(arg);
+      const boundValues = asQueryValues(arg, values);
+
       if (text === "BEGIN" || text === "COMMIT") {
         return { rowCount: null, rows: [] };
       }
 
       if (text.includes("INSERT INTO ingested_events")) {
-        const eventIds = (values?.[0] as string[]) ?? [];
+        const eventIds = (boundValues?.[0] as string[]) ?? [];
         return { rowCount: eventIds.length, rows: [] };
       }
 
@@ -352,11 +417,15 @@ describe("writeBatchWithClient", () => {
     );
 
     const insertCalls = query.mock.calls.filter((call) =>
-      String(call[0]).includes("INSERT INTO ingested_events")
+      asQueryText(call[0]).includes("INSERT INTO ingested_events")
     );
+    const firstInsertValues = asQueryValues(
+      insertCalls[0][0],
+      insertCalls[0][1] as unknown[]
+    ) as unknown[];
 
     expect(insertCalls).toHaveLength(1);
-    expect(((insertCalls[0][1] as unknown[])[0] as unknown[]).length).toBe(2);
+    expect((firstInsertValues[0] as unknown[]).length).toBe(2);
     expect(result.insertedCount).toBe(2);
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE ingestion_state"),
