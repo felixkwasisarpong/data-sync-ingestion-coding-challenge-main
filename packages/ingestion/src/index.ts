@@ -1,49 +1,43 @@
 import { loadConfig } from "./config";
+import { getCheckpointState } from "./db/checkpoint";
 import { runMigrations } from "./db/migrations";
 import { createPool } from "./db/pool";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
-interface IngestionStateRow {
-  id: number;
+interface BootstrapResult {
   cursor: string | null;
-  total_ingested: string;
-  updated_at: Date;
+  totalIngested: number;
 }
 
-async function bootstrapDatabase(): Promise<void> {
+async function bootstrapDatabase(): Promise<BootstrapResult> {
   const config = loadConfig();
   const pool = createPool(config.databaseUrl);
 
   try {
     const applied = await runMigrations(pool);
-
-    const result = await pool.query<IngestionStateRow>(
-      `
-      SELECT id, cursor, total_ingested, updated_at
-      FROM ingestion_state
-      WHERE id = 1;
-      `
-    );
-
-    if (result.rowCount !== 1) {
-      throw new Error("ingestion_state singleton row missing (id=1)");
-    }
-
-    const state = result.rows[0];
+    const state = await getCheckpointState(pool);
 
     console.log(
-      `ingestion scaffold started (mode=${config.apiMode}, migrationsApplied=${applied}, cursor=${state.cursor ?? "null"}, totalIngested=${state.total_ingested})`
+      `ingestion scaffold started (mode=${config.apiMode}, migrationsApplied=${applied}, cursor=${state.cursor ?? "null"}, totalIngested=${state.totalIngested})`
     );
+
+    return {
+      cursor: state.cursor,
+      totalIngested: state.totalIngested
+    };
   } finally {
     await pool.end();
   }
 }
 
 async function main(): Promise<void> {
-  await bootstrapDatabase();
+  const checkpoint = await bootstrapDatabase();
+  console.log(
+    `resume state loaded (cursor=${checkpoint.cursor ?? "null"}, totalIngested=${checkpoint.totalIngested})`
+  );
 
-  // Milestone 2 keeps the container alive after DB bootstrap.
+  // Milestone 3 keeps the container alive after loading resume state.
   setInterval(() => {
     console.log("ingestion scaffold heartbeat");
   }, HEARTBEAT_INTERVAL_MS);
