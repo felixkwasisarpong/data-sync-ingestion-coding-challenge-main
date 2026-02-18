@@ -30,7 +30,7 @@ export function loadConfig(): IngestionConfig {
     apiMaxRetries: readInt("API_MAX_RETRIES", 5),
     apiRetryBaseMs: readInt("API_RETRY_BASE_MS", 200),
     apiRetryMaxMs: readInt("API_RETRY_MAX_MS", 5000),
-    writeBatchSize: readInt("WRITE_BATCH_SIZE", 2000),
+    writeBatchSize: readInt("WRITE_BATCH_SIZE", 10000),
     progressLogIntervalMs: readInt("PROGRESS_LOG_INTERVAL_MS", 5000),
     logLevel: process.env.LOG_LEVEL ?? "info"
   };

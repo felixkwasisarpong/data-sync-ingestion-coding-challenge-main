@@ -56,7 +56,7 @@ services:
       API_MAX_RETRIES: 5
       API_RETRY_BASE_MS: 200
       API_RETRY_MAX_MS: 5000
-      WRITE_BATCH_SIZE: 2000
+      WRITE_BATCH_SIZE: 10000
     depends_on:
       postgres:
         condition: service_healthy
