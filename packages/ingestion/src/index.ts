@@ -1,9 +1,10 @@
 import { loadConfig } from "./config";
 import { createEventsClient } from "./api/eventsClient";
+import { createBulkWriter } from "./db/bulkWriter";
 import { getCheckpointState } from "./db/checkpoint";
 import { runMigrations } from "./db/migrations";
 import { createPool } from "./db/pool";
-import { runPaginationLoop } from "./ingestion/pagination";
+import { runBufferedIngestion } from "./ingestion/bufferedIngestion";
 import type { IngestionConfig } from "./types";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
@@ -36,29 +37,42 @@ async function bootstrapDatabase(config: IngestionConfig): Promise<BootstrapResu
 async function main(): Promise<void> {
   const config = loadConfig();
   const checkpoint = await bootstrapDatabase(config);
+  const pool = createPool(config.databaseUrl);
   const eventsClient = createEventsClient(config);
+  const bulkWriter = createBulkWriter(pool);
 
   console.log(
     `resume state loaded (cursor=${checkpoint.cursor ?? "null"}, totalIngested=${checkpoint.totalIngested})`
   );
 
-  const paginationResult = await runPaginationLoop(
+  const ingestionResult = await runBufferedIngestion(
     eventsClient,
-    checkpoint.cursor,
+    bulkWriter,
     {
-      onPage(page, pageNumber) {
-        console.log(
-          `page fetched (page=${pageNumber}, size=${page.data.length}, hasMore=${page.hasMore}, nextCursor=${page.nextCursor ?? "null"})`
-        );
+      startCursor: checkpoint.cursor,
+      batchSize: config.writeBatchSize,
+      hooks: {
+        onPage(page, pageNumber) {
+          console.log(
+            `page fetched (page=${pageNumber}, size=${page.data.length}, hasMore=${page.hasMore}, nextCursor=${page.nextCursor ?? "null"})`
+          );
+        },
+        onFlush(details) {
+          console.log(
+            `batch flushed (flush=${details.flushNumber}, batchSize=${details.batchSize}, inserted=${details.insertedCount}, cursor=${details.cursor ?? "null"})`
+          );
+        }
       }
     }
   );
 
   console.log(
-    `pagination loop complete (pages=${paginationResult.pagesFetched}, events=${paginationResult.eventsFetched}, finalCursor=${paginationResult.finalCursor ?? "null"})`
+    `buffered ingestion loop complete (pages=${ingestionResult.pagesFetched}, events=${ingestionResult.eventsFetched}, inserted=${ingestionResult.insertedCount}, flushes=${ingestionResult.flushes}, finalCursor=${ingestionResult.finalCursor ?? "null"})`
   );
 
-  // Milestone 4 keeps the container alive after pagination loop validation.
+  await pool.end();
+
+  // Milestone 6 keeps the container alive after buffered ingestion validation.
   setInterval(() => {
     console.log("ingestion scaffold heartbeat");
   }, HEARTBEAT_INTERVAL_MS);
