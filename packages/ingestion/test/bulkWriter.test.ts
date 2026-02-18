@@ -4,6 +4,7 @@ import {
   MAX_INSERT_EVENTS_PER_STATEMENT,
   buildBulkInsertStatement,
   createBulkWriter,
+  dedupeEventsById,
   writeBatchWithClient
 } from "../src/db/bulkWriter";
 
@@ -51,6 +52,24 @@ describe("buildBulkInsertStatement", () => {
     expect(() => buildBulkInsertStatement([])).toThrow(
       "Cannot build insert statement for empty event batch"
     );
+  });
+});
+
+describe("dedupeEventsById", () => {
+  it("preserves first occurrence order while removing duplicates", () => {
+    const deduped = dedupeEventsById([
+      { eventId: "evt-1", foo: "a" },
+      { eventId: "evt-2", foo: "b" },
+      { eventId: "evt-1", foo: "c" },
+      { eventId: "evt-3", foo: "d" },
+      { eventId: "evt-2", foo: "e" }
+    ]);
+
+    expect(deduped).toEqual([
+      { eventId: "evt-1", foo: "a" },
+      { eventId: "evt-2", foo: "b" },
+      { eventId: "evt-3", foo: "d" }
+    ]);
   });
 });
 
@@ -286,6 +305,62 @@ describe("writeBatchWithClient", () => {
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE ingestion_state"),
       ["cursor-large", MAX_INSERT_EVENTS_PER_STATEMENT + 7]
+    );
+  });
+
+  it("deduplicates duplicate event ids before insert", async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text === "BEGIN" || text === "COMMIT") {
+        return { rowCount: null, rows: [] };
+      }
+
+      if (text.includes("INSERT INTO ingested_events")) {
+        const eventIds = (values?.[0] as string[]) ?? [];
+        return { rowCount: eventIds.length, rows: [] };
+      }
+
+      if (text.includes("UPDATE ingestion_state")) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: 1,
+              cursor: "cursor-dedupe",
+              total_ingested: "2",
+              updated_at: new Date("2026-01-01T00:00:00.000Z")
+            }
+          ]
+        };
+      }
+
+      throw new Error(`Unexpected SQL: ${text}`);
+    });
+
+    const client = {
+      query,
+      release: vi.fn()
+    };
+
+    const result = await writeBatchWithClient(
+      client as never,
+      [
+        { eventId: "evt-1", occurredAt: null },
+        { eventId: "evt-1", occurredAt: null },
+        { eventId: "evt-2", occurredAt: null }
+      ],
+      "cursor-dedupe"
+    );
+
+    const insertCalls = query.mock.calls.filter((call) =>
+      String(call[0]).includes("INSERT INTO ingested_events")
+    );
+
+    expect(insertCalls).toHaveLength(1);
+    expect(((insertCalls[0][1] as unknown[])[0] as unknown[]).length).toBe(2);
+    expect(result.insertedCount).toBe(2);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE ingestion_state"),
+      ["cursor-dedupe", 2]
     );
   });
 });
