@@ -23,6 +23,7 @@ describe("buildBulkInsertStatement", () => {
     expect(statement.sql).toContain("($1, $2, $3)");
     expect(statement.sql).toContain("($4, $5, $6)");
     expect(statement.sql).toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(statement.sql).not.toContain("RETURNING");
 
     expect(statement.values).toEqual([
       "evt-1",
@@ -57,7 +58,7 @@ describe("writeBatchWithClient", () => {
       }
 
       if (text.includes("INSERT INTO ingested_events")) {
-        return { rowCount: 1, rows: [{ event_id: "evt-1" }] };
+        return { rowCount: 1, rows: [] };
       }
 
       if (text.includes("UPDATE ingestion_state")) {
@@ -171,5 +172,51 @@ describe("writeBatchWithClient", () => {
     ).rejects.toThrow("insert failed");
 
     expect(query).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("uses rowCount as inserted count when conflicts are ignored", async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text === "BEGIN" || text === "COMMIT") {
+        return { rowCount: null, rows: [] };
+      }
+
+      if (text.includes("INSERT INTO ingested_events")) {
+        return { rowCount: 0, rows: [] };
+      }
+
+      if (text.includes("UPDATE ingestion_state")) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: 1,
+              cursor: "cursor-2",
+              total_ingested: "101",
+              updated_at: new Date("2026-01-01T00:00:00.000Z")
+            }
+          ]
+        };
+      }
+
+      throw new Error(`Unexpected SQL: ${text}`);
+    });
+
+    const client = {
+      query,
+      release: vi.fn()
+    };
+
+    const result = await writeBatchWithClient(
+      client as never,
+      [{ eventId: "evt-duplicate", occurredAt: null }],
+      "cursor-2"
+    );
+
+    expect(result.insertedCount).toBe(0);
+    expect(query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("UPDATE ingestion_state"),
+      ["cursor-2", 0]
+    );
   });
 });
