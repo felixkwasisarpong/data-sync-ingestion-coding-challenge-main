@@ -42,4 +42,36 @@ describe("parseEventsPage", () => {
       })
     ).toThrow("data must be an array");
   });
+
+  it("parses live payload shape with nested pagination and numeric timestamp", () => {
+    const parsed = parseEventsPage({
+      data: [
+        {
+          id: "evt-live-1",
+          timestamp: 1769541612369
+        }
+      ],
+      pagination: {
+        hasMore: true,
+        nextCursor: "next-live-cursor"
+      }
+    });
+
+    expect(parsed.data[0].eventId).toBe("evt-live-1");
+    expect(parsed.data[0].occurredAt).toBe("2026-01-27T19:20:12.369Z");
+    expect(parsed.hasMore).toBe(true);
+    expect(parsed.nextCursor).toBe("next-live-cursor");
+  });
+
+  it("parses snake_case pagination fields", () => {
+    const parsed = parseEventsPage({
+      data: [{ id: "evt-live-2", timestamp: "1769541612369" }],
+      has_more: "true",
+      next_cursor: "snake-cursor"
+    });
+
+    expect(parsed.data[0].eventId).toBe("evt-live-2");
+    expect(parsed.hasMore).toBe(true);
+    expect(parsed.nextCursor).toBe("snake-cursor");
+  });
 });

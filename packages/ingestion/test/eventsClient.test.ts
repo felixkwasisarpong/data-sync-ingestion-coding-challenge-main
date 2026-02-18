@@ -177,6 +177,67 @@ describe("createEventsClient", () => {
     expect(sleepMock).toHaveBeenCalledWith(100);
   });
 
+  it("retries 429 using rateLimit.retryAfter body field", async () => {
+    const sleepMock = vi.fn(async () => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: "Too Many Requests",
+            rateLimit: { retryAfter: 3 }
+          }),
+          { status: 429 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: false, nextCursor: null }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    const client = createEventsClient(baseConfig, {
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      random: () => 0
+    });
+
+    await client.fetchEventsPage(null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledWith(3000);
+  });
+
+  it("retries 429 using x-ratelimit-reset header", async () => {
+    const sleepMock = vi.fn(async () => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: { "X-RateLimit-Reset": "4" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: [], hasMore: false, nextCursor: null }),
+          { status: 200 }
+        )
+      ) as unknown as typeof fetch;
+
+    const client = createEventsClient(baseConfig, {
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      random: () => 0
+    });
+
+    await client.fetchEventsPage(null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledWith(4000);
+  });
+
   it("retries timed out requests", async () => {
     vi.useFakeTimers();
 

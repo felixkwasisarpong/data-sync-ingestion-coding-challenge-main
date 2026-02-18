@@ -56,7 +56,26 @@ export async function runBufferedIngestion(
   let bufferCursor = cursor;
 
   while (true) {
-    const page = await client.fetchEventsPage(cursor);
+    let page: EventsPage;
+
+    try {
+      page = await client.fetchEventsPage(cursor);
+    } catch (error) {
+      const isStartupCursorExpired =
+        pagesFetched === 0 &&
+        cursor !== null &&
+        error instanceof Error &&
+        error.message.includes("CURSOR_EXPIRED");
+
+      if (isStartupCursorExpired) {
+        cursor = null;
+        bufferCursor = null;
+        continue;
+      }
+
+      throw error;
+    }
+
     pagesFetched += 1;
     eventsFetched += page.data.length;
 

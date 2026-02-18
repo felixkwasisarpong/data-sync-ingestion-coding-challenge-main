@@ -148,4 +148,51 @@ describe("runBufferedIngestion", () => {
       )
     ).rejects.toThrow("cursor did not advance");
   });
+
+  it("falls back to null cursor when startup cursor is expired", async () => {
+    let firstCall = true;
+
+    const client = {
+      async fetchEventsPage(cursor: string | null) {
+        if (firstCall) {
+          firstCall = false;
+          if (cursor !== "expired-cursor") {
+            throw new Error("expected initial expired cursor");
+          }
+          throw new Error(
+            "Events API request failed with status 400: {\"code\":\"CURSOR_EXPIRED\"}"
+          );
+        }
+
+        return {
+          data: [{ eventId: "evt-1" }],
+          hasMore: false,
+          nextCursor: null
+        };
+      }
+    };
+
+    const writeBatch = vi.fn(async (events: Array<{ eventId: string }>) => ({
+      insertedCount: events.length,
+      checkpoint: {
+        id: 1 as const,
+        cursor: null,
+        totalIngested: events.length,
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    }));
+
+    const result = await runBufferedIngestion(
+      client,
+      { writeBatch },
+      {
+        startCursor: "expired-cursor",
+        batchSize: 1000
+      }
+    );
+
+    expect(result.eventsFetched).toBe(1);
+    expect(writeBatch).toHaveBeenCalledTimes(1);
+    expect(writeBatch.mock.calls[0][1]).toBeNull();
+  });
 });
