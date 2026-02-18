@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  MAX_INSERT_EVENTS_PER_STATEMENT,
   buildBulkInsertStatement,
   writeBatchWithClient
 } from "../src/db/bulkWriter";
@@ -217,6 +218,69 @@ describe("writeBatchWithClient", () => {
       3,
       expect.stringContaining("UPDATE ingestion_state"),
       ["cursor-2", 0]
+    );
+  });
+
+  it("chunks large inserts and aggregates inserted count", async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text === "BEGIN" || text === "COMMIT") {
+        return { rowCount: null, rows: [] };
+      }
+
+      if (text.includes("INSERT INTO ingested_events")) {
+        const chunkSize = Math.floor((values?.length ?? 0) / 3);
+        return { rowCount: chunkSize, rows: [] };
+      }
+
+      if (text.includes("UPDATE ingestion_state")) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: 1,
+              cursor: "cursor-large",
+              total_ingested: String(MAX_INSERT_EVENTS_PER_STATEMENT + 7),
+              updated_at: new Date("2026-01-01T00:00:00.000Z")
+            }
+          ]
+        };
+      }
+
+      throw new Error(`Unexpected SQL: ${text}`);
+    });
+
+    const client = {
+      query,
+      release: vi.fn()
+    };
+
+    const events = Array.from(
+      { length: MAX_INSERT_EVENTS_PER_STATEMENT + 7 },
+      (_, index) => ({
+        eventId: `evt-${index + 1}`,
+        occurredAt: null as null
+      })
+    );
+
+    const result = await writeBatchWithClient(
+      client as never,
+      events,
+      "cursor-large"
+    );
+
+    const insertCalls = query.mock.calls.filter((call) =>
+      String(call[0]).includes("INSERT INTO ingested_events")
+    );
+
+    expect(insertCalls).toHaveLength(2);
+    expect((insertCalls[0][1] as unknown[]).length / 3).toBe(
+      MAX_INSERT_EVENTS_PER_STATEMENT
+    );
+    expect((insertCalls[1][1] as unknown[]).length / 3).toBe(7);
+    expect(result.insertedCount).toBe(MAX_INSERT_EVENTS_PER_STATEMENT + 7);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE ingestion_state"),
+      ["cursor-large", MAX_INSERT_EVENTS_PER_STATEMENT + 7]
     );
   });
 });

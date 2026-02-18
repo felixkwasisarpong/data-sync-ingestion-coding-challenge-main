@@ -12,6 +12,8 @@ const INSERT_EVENTS_SUFFIX = `
 ON CONFLICT (event_id) DO NOTHING;
 `;
 
+export const MAX_INSERT_EVENTS_PER_STATEMENT = 15000;
+
 export interface BulkWriteResult {
   insertedCount: number;
   checkpoint: CheckpointState;
@@ -75,13 +77,22 @@ export async function writeBatchWithClient(
     let insertedCount = 0;
 
     if (events.length > 0) {
-      const statement = buildBulkInsertStatement(events);
-      const insertResult = await client.query(
-        statement.sql,
-        statement.values
-      );
-
-      insertedCount = insertResult.rowCount ?? 0;
+      for (
+        let index = 0;
+        index < events.length;
+        index += MAX_INSERT_EVENTS_PER_STATEMENT
+      ) {
+        const chunk = events.slice(
+          index,
+          index + MAX_INSERT_EVENTS_PER_STATEMENT
+        );
+        const statement = buildBulkInsertStatement(chunk);
+        const insertResult = await client.query(
+          statement.sql,
+          statement.values
+        );
+        insertedCount += insertResult.rowCount ?? 0;
+      }
     }
 
     const checkpoint = await advanceCheckpoint(client, cursor, insertedCount);
