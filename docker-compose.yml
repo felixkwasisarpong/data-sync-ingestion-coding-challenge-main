@@ -46,17 +46,18 @@ services:
       dockerfile: packages/ingestion/Dockerfile
     environment:
       NODE_ENV: production
-      LOG_LEVEL: info
-      API_MODE: mock
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ingestion
-      API_BASE_URL: http://mock-api:3100/api/v1
-      DATASYNC_API_KEY: mock-api-key
-      API_PAGE_LIMIT: 1000
-      API_TIMEOUT_MS: 10000
-      API_MAX_RETRIES: 5
-      API_RETRY_BASE_MS: 200
-      API_RETRY_MAX_MS: 5000
-      WRITE_BATCH_SIZE: 10000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_MODE: ${API_MODE:-live}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/ingestion}
+      API_BASE_URL: ${API_BASE_URL:-http://datasync-dev-alb-101078500.us-east-1.elb.amazonaws.com/api/v1}
+      DATASYNC_API_KEY: ${DATASYNC_API_KEY:-}
+      API_PAGE_LIMIT: ${API_PAGE_LIMIT:-5000}
+      API_TIMEOUT_MS: ${API_TIMEOUT_MS:-10000}
+      API_MAX_RETRIES: ${API_MAX_RETRIES:-5}
+      API_RETRY_BASE_MS: ${API_RETRY_BASE_MS:-200}
+      API_RETRY_MAX_MS: ${API_RETRY_MAX_MS:-5000}
+      WRITE_BATCH_SIZE: ${WRITE_BATCH_SIZE:-25000}
+      LIVE_DISCOVERY_ON_RESUME: ${LIVE_DISCOVERY_ON_RESUME:-false}
     depends_on:
       postgres:
         condition: service_healthy
