@@ -18,6 +18,30 @@ function toEventId(record: RecordLike): string {
   return candidate;
 }
 
+function toIsoDateFromEpoch(value: number): string | null {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  const abs = Math.abs(value);
+  let millis = value;
+
+  if (abs >= 1e17) {
+    millis = value / 1_000_000;
+  } else if (abs >= 1e14) {
+    millis = value / 1_000;
+  } else if (abs >= 1e8 && abs < 1e11) {
+    millis = value * 1_000;
+  }
+
+  const date = new Date(millis);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
 function toOccurredAt(record: RecordLike): string | null | undefined {
   const candidate = record.occurredAt ?? record.occurred_at ?? record.timestamp;
 
@@ -30,26 +54,32 @@ function toOccurredAt(record: RecordLike): string | null | undefined {
   }
 
   if (typeof candidate === "number") {
-    const date = new Date(candidate);
-    if (Number.isNaN(date.getTime())) {
-      throw new Error("Invalid event payload: numeric timestamp is invalid");
-    }
-    return date.toISOString();
+    return toIsoDateFromEpoch(candidate);
   }
 
   if (typeof candidate !== "string") {
-    throw new Error("Invalid event payload: occurredAt must be a string or null");
+    return null;
   }
 
-  const numericCandidate = Number(candidate);
-  if (!Number.isNaN(numericCandidate) && candidate.trim().length > 0) {
-    const date = new Date(numericCandidate);
-    if (!Number.isNaN(date.getTime())) {
-      return date.toISOString();
+  const trimmed = candidate.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const numericCandidate = Number(trimmed);
+  if (!Number.isNaN(numericCandidate)) {
+    const isoFromEpoch = toIsoDateFromEpoch(numericCandidate);
+    if (isoFromEpoch !== null) {
+      return isoFromEpoch;
     }
   }
 
-  return candidate;
+  const parsed = Date.parse(trimmed);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed).toISOString();
+  }
+
+  return null;
 }
 
 function parseEvent(value: unknown): DataSyncEvent {
