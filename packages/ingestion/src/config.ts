@@ -49,6 +49,11 @@ function readApiPageLimit(apiMode: "mock" | "live"): number {
   return readInt("API_PAGE_LIMIT", fallback);
 }
 
+function readWriteBatchSize(apiMode: "mock" | "live"): number {
+  const fallback = apiMode === "live" ? 25000 : 10000;
+  return readInt("WRITE_BATCH_SIZE", fallback);
+}
+
 export function loadConfig(): IngestionConfig {
   const apiMode = process.env.API_MODE === "live" ? "live" : "mock";
 
@@ -66,7 +71,7 @@ export function loadConfig(): IngestionConfig {
     apiMaxRetries: readInt("API_MAX_RETRIES", 5),
     apiRetryBaseMs: readInt("API_RETRY_BASE_MS", 200),
     apiRetryMaxMs: readInt("API_RETRY_MAX_MS", 5000),
-    writeBatchSize: readInt("WRITE_BATCH_SIZE", 10000),
+    writeBatchSize: readWriteBatchSize(apiMode),
     progressLogIntervalMs: readInt("PROGRESS_LOG_INTERVAL_MS", 5000),
     liveDiscoveryOnResume: readBoolean("LIVE_DISCOVERY_ON_RESUME", false),
     logLevel: process.env.LOG_LEVEL ?? "info"

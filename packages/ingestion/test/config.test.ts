@@ -4,6 +4,7 @@ import { loadConfig } from "../src/config";
 
 const originalApiMode = process.env.API_MODE;
 const originalApiPageLimit = process.env.API_PAGE_LIMIT;
+const originalWriteBatchSize = process.env.WRITE_BATCH_SIZE;
 const originalLiveDiscoveryOnResume = process.env.LIVE_DISCOVERY_ON_RESUME;
 
 afterEach(() => {
@@ -17,6 +18,12 @@ afterEach(() => {
     delete process.env.API_PAGE_LIMIT;
   } else {
     process.env.API_PAGE_LIMIT = originalApiPageLimit;
+  }
+
+  if (originalWriteBatchSize === undefined) {
+    delete process.env.WRITE_BATCH_SIZE;
+  } else {
+    process.env.WRITE_BATCH_SIZE = originalWriteBatchSize;
   }
 
   if (originalLiveDiscoveryOnResume === undefined) {
@@ -44,11 +51,13 @@ describe("loadConfig", () => {
   it("uses higher page limit default in live mode", () => {
     process.env.API_MODE = "live";
     delete process.env.API_PAGE_LIMIT;
+    delete process.env.WRITE_BATCH_SIZE;
 
     const config = loadConfig();
 
     expect(config.apiMode).toBe("live");
     expect(config.apiPageLimit).toBe(5000);
+    expect(config.writeBatchSize).toBe(25000);
   });
 
   it("parses live discovery resume override", () => {
