@@ -6,6 +6,7 @@ import { getCheckpointState } from "./db/checkpoint";
 import { runMigrations } from "./db/migrations";
 import { createPool } from "./db/pool";
 import { runBufferedIngestion } from "./ingestion/bufferedIngestion";
+import { createProgressLogger } from "./ingestion/progressLogger";
 import type { IngestionConfig } from "./types";
 
 interface BootstrapResult {
@@ -39,6 +40,10 @@ async function main(): Promise<void> {
   const pool = createPool(config.databaseUrl);
   const eventsClient = createEventsClient(config);
   const bulkWriter = createBulkWriter(pool);
+  const progressLogger = createProgressLogger({
+    startTotalIngested: checkpoint.totalIngested,
+    intervalMs: config.progressLogIntervalMs
+  });
 
   console.log(
     `resume state loaded (cursor=${checkpoint.cursor ?? "null"}, totalIngested=${checkpoint.totalIngested})`
@@ -64,18 +69,26 @@ async function main(): Promise<void> {
         batchSize: config.writeBatchSize,
         hooks: {
           onPage(page, pageNumber) {
-            console.log(
-              `page fetched (page=${pageNumber}, size=${page.data.length}, hasMore=${page.hasMore}, nextCursor=${page.nextCursor ?? "null"})`
-            );
+            progressLogger.onPage(page.data.length, page.nextCursor);
+            if (config.logLevel === "debug") {
+              console.log(
+                `page fetched (page=${pageNumber}, size=${page.data.length}, hasMore=${page.hasMore}, nextCursor=${page.nextCursor ?? "null"})`
+              );
+            }
           },
           onFlush(details) {
-            console.log(
-              `batch flushed (flush=${details.flushNumber}, batchSize=${details.batchSize}, inserted=${details.insertedCount}, cursor=${details.cursor ?? "null"})`
-            );
+            progressLogger.onFlush(details.insertedCount, details.cursor);
+            if (config.logLevel === "debug") {
+              console.log(
+                `batch flushed (flush=${details.flushNumber}, batchSize=${details.batchSize}, inserted=${details.insertedCount}, cursor=${details.cursor ?? "null"})`
+              );
+            }
           }
         }
       }
     );
+
+    progressLogger.flush();
 
     console.log(
       `buffered ingestion loop complete (pages=${ingestionResult.pagesFetched}, events=${ingestionResult.eventsFetched}, inserted=${ingestionResult.insertedCount}, flushes=${ingestionResult.flushes}, finalCursor=${ingestionResult.finalCursor ?? "null"})`
