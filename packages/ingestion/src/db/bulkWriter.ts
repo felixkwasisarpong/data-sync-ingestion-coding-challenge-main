@@ -25,6 +25,27 @@ export interface BulkWriter {
   close?: () => Promise<void>;
 }
 
+export function dedupeEventsById(events: DataSyncEvent[]): DataSyncEvent[] {
+  if (events.length <= 1) {
+    return events;
+  }
+
+  const seen = new Set<string>();
+  const deduped: DataSyncEvent[] = [];
+
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (seen.has(event.eventId)) {
+      continue;
+    }
+
+    seen.add(event.eventId);
+    deduped.push(event);
+  }
+
+  return deduped;
+}
+
 function normalizeOccurredAt(raw: string | null | undefined): string | null {
   if (raw === null || raw === undefined) {
     return null;
@@ -72,14 +93,15 @@ export async function writeBatchWithClient(
 
   try {
     let insertedCount = 0;
+    const eventsForInsert = dedupeEventsById(events);
 
-    if (events.length > 0) {
+    if (eventsForInsert.length > 0) {
       for (
         let index = 0;
-        index < events.length;
+        index < eventsForInsert.length;
         index += MAX_INSERT_EVENTS_PER_STATEMENT
       ) {
-        const chunk = events.slice(
+        const chunk = eventsForInsert.slice(
           index,
           index + MAX_INSERT_EVENTS_PER_STATEMENT
         );
