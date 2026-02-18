@@ -14,6 +14,8 @@ const config: IngestionConfig = {
   apiRetryBaseMs: 100,
   apiRetryMaxMs: 1000,
   writeBatchSize: 2000,
+  progressLogIntervalMs: 5000,
+  liveDiscoveryOnResume: false,
   logLevel: "info"
 };
 

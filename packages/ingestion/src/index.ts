@@ -6,6 +6,7 @@ import { getCheckpointState } from "./db/checkpoint";
 import { runMigrations } from "./db/migrations";
 import { createPool } from "./db/pool";
 import { runBufferedIngestion } from "./ingestion/bufferedIngestion";
+import { shouldRunLiveDiscovery } from "./ingestion/liveDiscoveryGate";
 import { createProgressLogger } from "./ingestion/progressLogger";
 import type { IngestionConfig } from "./types";
 
@@ -49,7 +50,13 @@ async function main(): Promise<void> {
     `resume state loaded (cursor=${checkpoint.cursor ?? "null"}, totalIngested=${checkpoint.totalIngested})`
   );
 
-  if (config.apiMode === "live") {
+  if (
+    shouldRunLiveDiscovery(
+      config.apiMode,
+      checkpoint.totalIngested,
+      config.liveDiscoveryOnResume
+    )
+  ) {
     const discovery = await runLiveDiscovery(config);
     console.log(
       `live discovery complete (limit=5, sampleSize=${discovery.sampleSize}, hasMore=${discovery.hasMore}, nextCursor=${discovery.nextCursor ?? "null"})`
@@ -57,6 +64,10 @@ async function main(): Promise<void> {
     console.log(`live discovery headers: ${JSON.stringify(discovery.headers)}`);
     console.log(
       `live discovery response shape: ${JSON.stringify(discovery.responseShape)}`
+    );
+  } else if (config.apiMode === "live") {
+    console.log(
+      `live discovery skipped (resume=true, totalIngested=${checkpoint.totalIngested})`
     );
   }
 

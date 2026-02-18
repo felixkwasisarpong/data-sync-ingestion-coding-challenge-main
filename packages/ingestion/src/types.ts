@@ -22,6 +22,7 @@ export interface IngestionConfig {
   apiRetryMaxMs: number;
   writeBatchSize: number;
   progressLogIntervalMs: number;
+  liveDiscoveryOnResume: boolean;
   logLevel: string;
 }
 
